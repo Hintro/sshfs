@@ -302,6 +302,7 @@ struct conntab_entry {
 };
 
 struct sshfs {
+	char *reverse_conf;
 	char *directport;
 	char *ssh_command;
 	char *sftp_server;
@@ -475,6 +476,7 @@ enum {
 #define SSHFS_OPT(t, p, v) { t, offsetof(struct sshfs, p), v }
 
 static struct fuse_opt sshfs_opts[] = {
+	SSHFS_OPT("reverse_conf=%s",   reverse_conf, 0),
 	SSHFS_OPT("directport=%s",     directport, 0),
 	SSHFS_OPT("ssh_command=%s",    ssh_command, 0),
 	SSHFS_OPT("sftp_server=%s",    sftp_server, 0),
@@ -4396,6 +4398,31 @@ int main(int argc, char *argv[])
 	ssh_add_arg(sftp_server);
 	free(sshfs.sftp_server);
 
+	if (sshfs.reverse_conf)
+	{
+		FILE *file = fopen(sshfs.reverse_conf, "r");
+		if (file == NULL) {
+			perror("Error opening file");
+			return 1;
+		}
+
+		// Read the first line
+		size_t len = 0;
+		if (getline(&sshfs.directport, &len, file) < 0) {
+			perror("Error reading first line");
+			return 1;
+		}
+		sshfs.directport[len-1] = '\0'; // get rid of the newline; might not be needed cuz lib
+
+		// Read the rest of the file
+		if (getdelim(&sshfs.reverse_conf, &len, '\0', file) < 0) {
+			perror("Error reading first line");
+			return 1;
+		}
+		sshfs.host = "localhost";
+		ssh_add_arg(sshfs.reverse_conf);
+	}
+	
 	res = cache_parse_options(&args);
 	if (res == -1)
 		exit(1);
@@ -4489,6 +4516,7 @@ int main(int argc, char *argv[])
 	fuse_opt_free_args(&args);
 	fuse_opt_free_args(&sshfs.ssh_args);
 	free(sshfs.directport);
+	free(sshfs.reverse_conf);
 
 	return res;
 }
