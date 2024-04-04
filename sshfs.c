@@ -129,7 +129,7 @@
 
 #define MY_EOF 1
 
-#define MAX_REPLY_LEN (1 << 17)
+#define MAX_REPLY_LEN (1 << 20)
 
 #define RENAME_TEMP_CHARS 8
 
@@ -4401,11 +4401,6 @@ int main(int argc, char *argv[])
 		exit(1);
 
 	sshfs.randseed = time(0);
-
-	if (sshfs.max_read > 65536)
-		sshfs.max_read = 65536;
-	if (sshfs.max_write > 65536)
-		sshfs.max_write = 65536;
 
 	fsname = fsname_escape_commas(fsname);
 	tmp = g_strdup_printf("-osubtype=sshfs,fsname=%s", fsname);
