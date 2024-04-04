@@ -476,7 +476,7 @@ enum {
 #define SSHFS_OPT(t, p, v) { t, offsetof(struct sshfs, p), v }
 
 static struct fuse_opt sshfs_opts[] = {
-	SSHFS_OPT("reverse_conf=%s",   reverse_conf, 0),
+	SSHFS_OPT("reverse_conf=%s", reverse_conf, 0),
 	SSHFS_OPT("directport=%s",     directport, 0),
 	SSHFS_OPT("ssh_command=%s",    ssh_command, 0),
 	SSHFS_OPT("sftp_server=%s",    sftp_server, 0),
@@ -1888,12 +1888,14 @@ out:
 
 static int connect_remote(struct conn *conn)
 {
-	int err;
+	int err = 0;
 
+	if (sshfs.reverse_conf)
+		err = start_ssh(conn), sshfs.host = "localhost", sleep(3);
 	if (sshfs.passive)
 		err = connect_passive(conn);
 	else if (sshfs.directport)
-		err = connect_to(conn, sshfs.host, sshfs.directport);
+		err |= connect_to(conn, sshfs.host, sshfs.directport);
 	else if (sshfs.vsock)
 		err = connect_vsock(conn, sshfs.vsock);
 	else
@@ -4385,7 +4387,9 @@ int main(int argc, char *argv[])
 	ssh_add_arg(tmp);
 	g_free(tmp);
 	ssh_add_arg(sshfs.host);
-	if (sshfs.sftp_server)
+
+	if (!sshfs.reverse_conf) {
+		if (sshfs.sftp_server)
 		sftp_server = sshfs.sftp_server;
 	else if (sshfs.ssh_ver == 1)
 		sftp_server = SFTP_SERVER_PATH;
@@ -4397,6 +4401,8 @@ int main(int argc, char *argv[])
 
 	ssh_add_arg(sftp_server);
 	free(sshfs.sftp_server);
+	}
+	
 
 	if (sshfs.reverse_conf)
 	{
@@ -4408,18 +4414,19 @@ int main(int argc, char *argv[])
 
 		// Read the first line
 		size_t len = 0;
-		if (getline(&sshfs.directport, &len, file) < 0) {
+		if ((len = getline(&sshfs.directport, &len, file)) == -1) {
 			perror("Error reading first line");
 			return 1;
 		}
+		// printf("%ld %s", len, sshfs.directport);
 		sshfs.directport[len-1] = '\0'; // get rid of the newline; might not be needed cuz lib
 
 		// Read the rest of the file
+		len = 0;
 		if (getdelim(&sshfs.reverse_conf, &len, '\0', file) < 0) {
 			perror("Error reading first line");
 			return 1;
 		}
-		sshfs.host = "localhost";
 		ssh_add_arg(sshfs.reverse_conf);
 	}
 	
