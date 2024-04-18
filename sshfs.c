@@ -303,6 +303,7 @@ struct conntab_entry {
 
 struct sshfs {
 	char *reverse_conf;
+	char *local_hostname;
 	char *remote_port;
 	char *directport;
 	char *ssh_command;
@@ -523,7 +524,7 @@ static struct fuse_opt sshfs_opts[] = {
 	SSHFS_OPT("verbose",	verbose, 1),
 	SSHFS_OPT("-f",		foreground, 1),
 	SSHFS_OPT("-s",		singlethread, 1),
-	SSHFS_OPT("-R",		reverse_conf, 1),	
+	SSHFS_OPT("-R",		reverse_conf, 0),
 
 	FUSE_OPT_KEY("-p ",            KEY_PORT),
 	FUSE_OPT_KEY("-C",             KEY_COMPRESS),
@@ -1274,7 +1275,7 @@ static int connect_to(struct conn *conn, char *host, char *port)
 	err = connect(sock, ai->ai_addr, ai->ai_addrlen);
 	if (err == -1) {
 		if (sshfs.reverse_conf){
-			fprintf("local port is not available\n")
+			fprintf("%s", "local port is not available\n");
 		}
 		perror("failed to connect");
 		freeaddrinfo(ai);
@@ -3665,8 +3666,8 @@ static void usage(const char *progname)
 "    -p PORT                equivalent to '-o port=PORT'\n"
 "    -C                     equivalent to '-o compression=yes'\n"
 "    -F ssh_configfile      specifies alternative ssh configuration file\n"
-"	 -R [remote_port:]local_hostname\n
-							reverse connection using hpnssh\n"
+"	 -R [remote_port:]local_hostname\n"
+"							reverse connection using hpnssh\n"
 "    -1                     equivalent to '-o ssh_protocol=1'\n"
 "    -o opt,[opt...]        mount options\n"
 "    -o reconnect           reconnect to server\n"
@@ -4235,6 +4236,14 @@ int main(int argc, char *argv[])
 	char * local_port = "34567";
 	char * remote_port = "34568";
 	char * local_hostname = NULL;
+	FILE *logFile = fopen("program.log", "a");
+	if (logFile == NULL) {
+        // 如果文件无法打开，打印错误并退出
+        perror("Error opening log file");
+        return 1;
+    }
+ 	fprintf(logFile, "Program started\n");
+	fflush(logFile);	
 
 #ifdef __APPLE__
 	if (!realpath(*exec_path, sshfs_program_path)) {
@@ -4399,6 +4408,15 @@ int main(int argc, char *argv[])
 	g_free(tmp);
 	ssh_add_arg(sshfs.host);
 
+	fprintf(logFile, "sshfs.reverse_conf = ");
+	if (sshfs.reverse_conf){
+		fprintf(logFile, sshfs.reverse_conf);
+	}else{
+		fprintf(logFile, "NULL");
+	}
+
+	fflush(logFile);
+
 	if (!sshfs.reverse_conf) {
 		if (sshfs.sftp_server)
 		sftp_server = sshfs.sftp_server;
@@ -4414,8 +4432,11 @@ int main(int argc, char *argv[])
 	free(sshfs.sftp_server);
 	}
 
+
 	if (sshfs.reverse_conf)  
 	{
+		fprintf(logFile, "Entered if sshfs.reverse_conf");
+		
 		char *rsync_remote_server = sshfs.sftp_server; 
 		char *rsync_path = "~/.cache/sshfs/";
 
@@ -4463,13 +4484,16 @@ int main(int argc, char *argv[])
 		} else {
 			// No colon found, indicating only "hostname" is provided
 			sshfs.remote_port = remote_port; // Indicate that no port is provided
-			sshfs.hostname = strdup(sshfs.reverse_conf); // Allocate and copy hostname
+			sshfs.local_hostname = strdup(sshfs.reverse_conf); // Allocate and copy hostname
 		}
+
+		fprintf(logFile, sshfs.reverse_conf);
+
 		
-		if (!sshfs.directport) {sshfs.directport = local_port}
+		if (!sshfs.directport) {sshfs.directport = local_port;}
 
 		int bufferSize = snprintf(NULL, 0, "ncat -lp %s -e /usr/lib/openssh/sftp-server &\nssh -R %s:localhost:%s %s",
-                              sshfs_directport, remote_port, sshfs_directport, sshfs.local_hostname) + 1;
+                              sshfs.directport, sshfs.remote_port, sshfs.directport, sshfs.local_hostname) + 1;
 
 		// Allocate memory for the command
 		char* remote_cmd = malloc(bufferSize);
@@ -4480,7 +4504,7 @@ int main(int argc, char *argv[])
 
 		// Construct the command
 		sprintf(remote_cmd, "ncat -lp %s -e /usr/lib/openssh/sftp-server &\nssh -R %s:localhost:%s %s",
-				sshfs_directport, remote_port, sshfs_directport, sshfs.local_hostname);
+				sshfs.directport, sshfs.remote_port, sshfs.directport, sshfs.local_hostname);
 
 		ssh_add_arg(remote_cmd);
 	}
@@ -4580,6 +4604,12 @@ int main(int argc, char *argv[])
 	free(sshfs.directport);
 	free(sshfs.reverse_conf);
 	free(remote_cmd);
+	
+	
+	fprintf(logFile, "Program ended\n");
+	fflush(logFile);
+    fclose(logFile);
+
 
 	return res;
 }
