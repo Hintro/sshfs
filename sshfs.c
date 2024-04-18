@@ -4608,7 +4608,7 @@ int main(int argc, char *argv[])
 	
 	fprintf(logFile, "Program ended\n");
 	fflush(logFile);
-    fclose(logFile);
+	fclose(logFile);
 
 
 	return res;
