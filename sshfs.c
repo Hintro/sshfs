@@ -302,7 +302,7 @@ struct conntab_entry {
 };
 
 struct sshfs {
-	char *reverse_conf;
+	char *rev_conn;
 	char *directport;
 	char *ssh_command;
 	char *sftp_server;
@@ -476,7 +476,7 @@ enum {
 #define SSHFS_OPT(t, p, v) { t, offsetof(struct sshfs, p), v }
 
 static struct fuse_opt sshfs_opts[] = {
-	SSHFS_OPT("reverse_conf=%s", reverse_conf, 0),
+	SSHFS_OPT("rev_conn=%s", rev_conn, 0),
 	SSHFS_OPT("directport=%s",     directport, 0),
 	SSHFS_OPT("ssh_command=%s",    ssh_command, 0),
 	SSHFS_OPT("sftp_server=%s",    sftp_server, 0),
@@ -1165,6 +1165,14 @@ static int start_ssh(struct conn *conn, int reverse)
 			return -1;
 	}
 
+	if (sshfs.debug) {
+			fprintf(stderr, "executing");
+			for (int i = 0; i < sshfs.ssh_args.argc; i++)
+				fprintf(stderr, " <%s>",
+					sshfs.ssh_args.argv[i]);
+			fprintf(stderr, "\n");
+	}
+
 	if (reverse) {
 		signal(SIGALRM, handle_wakeup);
 		signal(SIGUSR1, handle_wakeup);
@@ -1245,15 +1253,6 @@ static int start_ssh(struct conn *conn, int reverse)
 			close(sshfs.ptyfd);
 		}
 
-		if (sshfs.debug) {
-			int i;
-
-			fprintf(stderr, "executing");
-			for (i = 0; i < sshfs.ssh_args.argc; i++)
-				fprintf(stderr, " <%s>",
-					sshfs.ssh_args.argv[i]);
-			fprintf(stderr, "\n");
-		}
 
 		execvp(sshfs.ssh_args.argv[0], sshfs.ssh_args.argv);
 		fprintf(stderr, "failed to execute '%s': %s\n",
@@ -1916,7 +1915,7 @@ static int connect_remote(struct conn *conn)
 {
 	int err = 0;
 
-	if (sshfs.reverse_conf)
+	if (sshfs.rev_conn)
 		err = start_ssh(conn, 1), sshfs.host = "localhost";
 	if (sshfs.passive)
 		err = connect_passive(conn);
@@ -3725,6 +3724,7 @@ static void usage(const char *progname)
 "    -o nomap=TYPE          with idmap=file, how to handle missing mappings\n"
 "             ignore           don't do any re-mapping\n"
 "             error            return an error (default)\n"
+"    -o rev_conn=[far_port:]local  reverse connect to local (IP or hostname); far_port defaults to 34567\n"
 "    -o ssh_command=CMD     execute CMD instead of 'ssh'\n"
 "    -o ssh_protocol=N      ssh protocol to use (default: 2)\n"
 "    -o sftp_server=SERV    path to sftp server or subsystem (default: sftp)\n"
@@ -4360,6 +4360,11 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	if (sshfs.rev_conn && sshfs.password_stdin) {
+		fprintf(stderr, "specifying both the rev_conn and passive options is currently not supported\n");
+		exit(1);
+	}
+
 	if (sshfs.password_stdin) {
 		res = read_password();
 		if (res == -1)
@@ -4414,7 +4419,7 @@ int main(int argc, char *argv[])
 	g_free(tmp);
 	ssh_add_arg(sshfs.host);
 
-	if (!sshfs.reverse_conf) {
+	if (!sshfs.rev_conn) {
 		if (sshfs.sftp_server)
 		sftp_server = sshfs.sftp_server;
 	else if (sshfs.ssh_ver == 1)
@@ -4430,30 +4435,46 @@ int main(int argc, char *argv[])
 	}
 	
 
-	if (sshfs.reverse_conf)
+	if (sshfs.rev_conn)
 	{
-		FILE *file = fopen(sshfs.reverse_conf, "r");
-		if (file == NULL) {
-			perror("Error opening file");
-			return 1;
-		}
+		// FILE *file = fopen(sshfs.rev_conn, "r");
+		// if (file == NULL) {
+		// 	perror("Error opening file");
+		// 	return 1;
+		// }
 
-		// Read the first line
-		size_t len = 0;
-		if ((len = getline(&sshfs.directport, &len, file)) == -1) {
-			perror("Error reading first line");
-			return 1;
-		}
-		// printf("%ld %s", len, sshfs.directport);
-		sshfs.directport[len-1] = '\0'; // get rid of the newline; might not be needed cuz lib
+		// // Read the first line
+		// size_t len = 0;
+		// if ((len = getline(&sshfs.directport, &len, file)) == -1) {
+		// 	perror("Error reading first line");
+		// 	return 1;
+		// }
+		// // printf("%ld %s", len, sshfs.directport);
+		// sshfs.directport[len-1] = '\0'; // get rid of the newline; might not be needed cuz lib
 
-		// Read the rest of the file
-		len = 0;
-		if (getdelim(&sshfs.reverse_conf, &len, '\0', file) < 0) {
-			perror("Error reading first line");
-			return 1;
-		}
-		ssh_add_arg(sshfs.reverse_conf);
+		// // Read the rest of the file
+		// len = 0;
+		// if (getdelim(&sshfs.rev_conn, &len, '\0', file) < 0) {
+		// 	perror("Error reading first line");
+		// 	return 1;
+		// }
+
+		char rsync_path[] = "~/.cache/sshfs/";
+		char *command = g_strdup_printf("rsync -r %s %s:%s", rsync_path, sshfs.host, rsync_path);
+		if (system(command) < 0)
+			perror("rsync failed to upload binaries for reverse mode");
+
+		char *colon = strchr(sshfs.rev_conn, ':');
+
+		if (colon != NULL)
+			*colon = '\0';
+		char *far_port = colon ? sshfs.rev_conn : "34567", *local = colon ? colon+1 : sshfs.rev_conn;
+		
+		sshfs.directport = sshfs.directport ? sshfs.directport : "34568";
+		char* remote_cmd = g_strdup_printf("%sncat -lp %s -e /usr/lib/openssh/sftp-server & NC_PID=$!; %shpnssh -o StrictHostKeyChecking=no -TR %s:localhost:%s %s@%s 'killall -SIGUSR1 sshfs'; kill $NC_PID",
+			rsync_path, far_port, rsync_path, sshfs.directport, far_port, getlogin(), local);
+		
+		ssh_add_arg(remote_cmd);
 	}
 	
 	res = cache_parse_options(&args);
@@ -4549,7 +4570,7 @@ int main(int argc, char *argv[])
 	fuse_opt_free_args(&args);
 	fuse_opt_free_args(&sshfs.ssh_args);
 	free(sshfs.directport);
-	free(sshfs.reverse_conf);
+	free(sshfs.rev_conn);
 
 	return res;
 }
