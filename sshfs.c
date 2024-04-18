@@ -303,6 +303,7 @@ struct conntab_entry {
 
 struct sshfs {
 	char *reverse_conf;
+	char *remote_port;
 	char *directport;
 	char *ssh_command;
 	char *sftp_server;
@@ -476,7 +477,7 @@ enum {
 #define SSHFS_OPT(t, p, v) { t, offsetof(struct sshfs, p), v }
 
 static struct fuse_opt sshfs_opts[] = {
-	SSHFS_OPT("reverse_conf=%s", reverse_conf, 0),
+	//SSHFS_OPT("reverse_conf=%s",   reverse_conf, 0),
 	SSHFS_OPT("directport=%s",     directport, 0),
 	SSHFS_OPT("ssh_command=%s",    ssh_command, 0),
 	SSHFS_OPT("sftp_server=%s",    sftp_server, 0),
@@ -522,6 +523,7 @@ static struct fuse_opt sshfs_opts[] = {
 	SSHFS_OPT("verbose",	verbose, 1),
 	SSHFS_OPT("-f",		foreground, 1),
 	SSHFS_OPT("-s",		singlethread, 1),
+	SSHFS_OPT("-R",		reverse_conf, 1),	
 
 	FUSE_OPT_KEY("-p ",            KEY_PORT),
 	FUSE_OPT_KEY("-C",             KEY_COMPRESS),
@@ -1271,6 +1273,9 @@ static int connect_to(struct conn *conn, char *host, char *port)
 	}
 	err = connect(sock, ai->ai_addr, ai->ai_addrlen);
 	if (err == -1) {
+		if (sshfs.reverse_conf){
+			fprintf("local port is not available\n")
+		}
 		perror("failed to connect");
 		freeaddrinfo(ai);
 		close(sock);
@@ -3660,6 +3665,8 @@ static void usage(const char *progname)
 "    -p PORT                equivalent to '-o port=PORT'\n"
 "    -C                     equivalent to '-o compression=yes'\n"
 "    -F ssh_configfile      specifies alternative ssh configuration file\n"
+"	 -R [remote_port:]local_hostname\n
+							reverse connection using hpnssh\n"
 "    -1                     equivalent to '-o ssh_protocol=1'\n"
 "    -o opt,[opt...]        mount options\n"
 "    -o reconnect           reconnect to server\n"
@@ -4224,6 +4231,10 @@ int main(int argc, char *argv[])
 	struct fuse *fuse;
 	struct fuse_session *se;
 	int i;
+	char * remote_cmd = NULL;
+	char * local_port = "34567";
+	char * remote_port = "34568";
+	char * local_hostname = NULL;
 
 #ifdef __APPLE__
 	if (!realpath(*exec_path, sshfs_program_path)) {
@@ -4402,32 +4413,76 @@ int main(int argc, char *argv[])
 	ssh_add_arg(sftp_server);
 	free(sshfs.sftp_server);
 	}
-	
 
-	if (sshfs.reverse_conf)
+	if (sshfs.reverse_conf)  
 	{
-		FILE *file = fopen(sshfs.reverse_conf, "r");
-		if (file == NULL) {
-			perror("Error opening file");
-			return 1;
-		}
+		char *rsync_remote_server = sshfs.sftp_server; 
+		char *rsync_path = "~/.cache/sshfs/";
+
+		char command[1024];
+
+		// // download ncat, hpnssh
+		// system("sudo apt-get install -y nmap");
+		// system("sudo add-apt-repository ppa:rapier1/hpnssh");
+		// system("sudo apt-get install hpnssh");
+		// // move ncat, hpnssh from default dir to "~/.cache/sshfs/"
+		// system("cp /usr/bin/ncat ~/.cache/sshfs/");
+		// system("cp /usr/bin/hpnssh ~/.cache/sshfs/"); 
+
+		snprintf(command, sizeof(command), "rsync -r %s %s:%s/", rsync_path, rsync_remote_server, rsync_path);
+		system(command);
+
+		// FILE *file = fopen(sshfs.reverse_conf, "r");
+		// if (file == NULL) {
+		// 	perror("Error opening file");
+		// 	return 1;
+		// }
 
 		// Read the first line
-		size_t len = 0;
-		if ((len = getline(&sshfs.directport, &len, file)) == -1) {
-			perror("Error reading first line");
-			return 1;
-		}
+		// size_t len = 0;
+		// if ((len = getline(&sshfs.directport, &len, file)) == -1) {
+		// 	perror("Error reading first line");
+		// 	return 1;
+		// }
 		// printf("%ld %s", len, sshfs.directport);
-		sshfs.directport[len-1] = '\0'; // get rid of the newline; might not be needed cuz lib
+		//sshfs.directport[len-1] = '\0'; // get rid of the newline; might not be needed cuz lib
 
 		// Read the rest of the file
-		len = 0;
-		if (getdelim(&sshfs.reverse_conf, &len, '\0', file) < 0) {
-			perror("Error reading first line");
-			return 1;
+		// len = 0;
+		// if (getdelim(&sshfs.reverse_conf, &len, '\0', file) < 0) {
+		// 	perror("Error reading first line");
+		// 	return 1;
+		// }
+
+		char *colonPos = strchr(sshfs.reverse_conf, ':');
+
+		if (colonPos != NULL) {
+			// Colon found, indicating "port:hostname" format
+			sshfs.remote_port = atoi(sshfs.reverse_conf); // Convert port number to integer
+			sshfs.local_hostname = strdup(colonPos + 1); // Allocate and copy hostname
+		} else {
+			// No colon found, indicating only "hostname" is provided
+			sshfs.remote_port = remote_port; // Indicate that no port is provided
+			sshfs.hostname = strdup(sshfs.reverse_conf); // Allocate and copy hostname
 		}
-		ssh_add_arg(sshfs.reverse_conf);
+		
+		if (!sshfs.directport) {sshfs.directport = local_port}
+
+		int bufferSize = snprintf(NULL, 0, "ncat -lp %s -e /usr/lib/openssh/sftp-server &\nssh -R %s:localhost:%s %s",
+                              sshfs_directport, remote_port, sshfs_directport, sshfs.local_hostname) + 1;
+
+		// Allocate memory for the command
+		char* remote_cmd = malloc(bufferSize);
+		if (remote_cmd == NULL) {
+			perror("Failed to allocate memory");
+			exit(EXIT_FAILURE);
+		}
+
+		// Construct the command
+		sprintf(remote_cmd, "ncat -lp %s -e /usr/lib/openssh/sftp-server &\nssh -R %s:localhost:%s %s",
+				sshfs_directport, remote_port, sshfs_directport, sshfs.local_hostname);
+
+		ssh_add_arg(remote_cmd);
 	}
 	
 	res = cache_parse_options(&args);
@@ -4524,6 +4579,7 @@ int main(int argc, char *argv[])
 	fuse_opt_free_args(&sshfs.ssh_args);
 	free(sshfs.directport);
 	free(sshfs.reverse_conf);
+	free(remote_cmd);
 
 	return res;
 }

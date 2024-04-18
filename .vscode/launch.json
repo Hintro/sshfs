@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/zoeyang/Desktop/Duke/566/HW/sshfs",
+      "program": "/Users/zoeyang/Desktop/Duke/566/HW/sshfs/build/Debug/outDebug"
+    }
+  ]
+}
