@@ -1143,7 +1143,12 @@ static void replace_arg(char **argp, const char *newarg)
 	}
 }
 
-static int start_ssh(struct conn *conn)
+static int wake_up;
+static void handle_wakeup(int signum) {
+    wake_up = signum == SIGUSR1;
+}
+
+static int start_ssh(struct conn *conn, int reverse)
 {
 	char *ptyname = NULL;
 	int sockpair[2];
@@ -1158,6 +1163,27 @@ static int start_ssh(struct conn *conn)
 		sshfs.ptypassivefd = open(ptyname, O_RDWR | O_NOCTTY);
 		if (sshfs.ptypassivefd == -1)
 			return -1;
+	}
+
+	if (reverse) {
+		signal(SIGALRM, handle_wakeup);
+		signal(SIGUSR1, handle_wakeup);
+		pid = fork();
+		if (pid == -1)
+			return perror("failed to fork"), -1;
+		else if (pid == 0) {
+			execvp(sshfs.ssh_args.argv[0], sshfs.ssh_args.argv);
+			fprintf(stderr, "failed to execute '%s': %s\n",
+				sshfs.ssh_args.argv[0], strerror(errno));
+			_exit(1);
+		}
+
+		wake_up = 0;
+		alarm(9); // Timeout after 9 seconds
+		pause();
+		if (wake_up == 0)
+			perror("Reverse SSH connection failed");
+		return wake_up - 1;
 	}
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockpair) == -1) {
@@ -1891,7 +1917,7 @@ static int connect_remote(struct conn *conn)
 	int err = 0;
 
 	if (sshfs.reverse_conf)
-		err = start_ssh(conn), sshfs.host = "localhost", sleep(3);
+		err = start_ssh(conn, 1), sshfs.host = "localhost";
 	if (sshfs.passive)
 		err = connect_passive(conn);
 	else if (sshfs.directport)
@@ -1899,7 +1925,7 @@ static int connect_remote(struct conn *conn)
 	else if (sshfs.vsock)
 		err = connect_vsock(conn, sshfs.vsock);
 	else
-		err = start_ssh(conn);
+		err = start_ssh(conn, 0);
 	if (!err)
 		err = sftp_init(conn);
 
