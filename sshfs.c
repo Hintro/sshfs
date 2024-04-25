@@ -4471,8 +4471,8 @@ int main(int argc, char *argv[])
 		char *far_port = colon ? sshfs.rev_conn : "34567", *local = colon ? colon+1 : sshfs.rev_conn;
 		
 		sshfs.directport = sshfs.directport ? sshfs.directport : "34568";
-		char* remote_cmd = g_strdup_printf("%sncat -lp %s -e /usr/lib/openssh/sftp-server & NC_PID=$!; %shpnssh -o StrictHostKeyChecking=no -TR %s:localhost:%s %s@%s 'killall -SIGUSR1 sshfs'; kill $NC_PID",
-			rsync_path, far_port, rsync_path, sshfs.directport, far_port, getlogin(), local);
+		char* remote_cmd = g_strdup_printf("%sncat -lp %s -e %shpnsftp-server & NC_PID=$!; %shpnssh -oStrictHostKeyChecking=no -TR %s:localhost:%s %s@%s 'kill -SIGUSR1 %d'; kill $NC_PID",
+			rsync_path, far_port, rsync_path, rsync_path, sshfs.directport, far_port, getlogin(), local, getpid());
 		
 		ssh_add_arg(remote_cmd);
 	}
